@@ -1,0 +1,155 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "AWS CloudFormation Template to create a S3 bucket and a IAM user",
+
+  "Parameters": {
+  	 "AppEnv" : {
+      	"Description" : "The name of the application environment",
+      	"Type" : "String",
+      	"AllowedValues" : [ "sandbox", "dev", "nonprod", "prod" ],
+      	"ConstraintDescription" : "must be sandbox, dev, nonprod, or prod"
+    },
+     "AppName" : {
+      	 "Description" : "The name of the application",
+      	 "Type" : "String",
+      	 "MinLength" : "1",
+         "Default" : "aws-bysmartmigration"
+	 },
+  	 "TagAppName" : {
+         "Description" : "The tag Name",
+      	 "Type" : "String",
+      	 "MinLength" : "1"
+	 },
+  	 "SupportMarket" : {
+      	 "Description" : "The LM market supporting the application",
+      	 "Type" : "String",
+      	 "AllowedValues" : [ "USCM", "CI", "ETS", "GS", "ICM", "LMB" ],
+      	 "ConstraintDescription" : "must be USCM, CI, ETS, GS, ICM, or LMB",
+         "Default" : "ETS"
+     },
+     "SupportEmail" : {
+      	 "Description" : "The LM email supporting the application",
+      	 "Type" : "String",
+      	 "MinLength" : "1"
+     },
+     "BucketName": {
+        "Description" : "Enter a valid bucket name",
+        "Type": "String",
+        "MinLength" : "5",
+        "MaxLength" : "20"
+     },
+     "UserName": {
+		"Type": "String",
+		"Description": "Enter name of the IAM User which is unique."
+	 }
+  },
+  "Resources" : {
+    "S3Bucket" : {
+      "Type" : "AWS::S3::Bucket",
+      "Properties" : {
+        "BucketName": { "Ref" : "BucketName" },
+		"AccessControl": "Private",
+		"BucketEncryption": {
+			"ServerSideEncryptionConfiguration": [
+			{
+				"ServerSideEncryptionByDefault": {
+				"SSEAlgorithm": "AES256"
+				}
+			}
+			]
+		},
+		"LoggingConfiguration": {
+            "DestinationBucketName": { "Fn::Join" : [ "-", [ "lmig-s3-access-logs", { "Ref" : "AWS::AccountId" }, { "Ref" : "AWS::Region" }]]}
+        },
+        "Tags" : [
+                 	{ "Key" : "Name", "Value" : {"Ref" : "TagAppName"}},
+					{ "Key" : "lm_app", "Value": { "Ref" : "AppName" }},
+					{ "Key" : "lm_owner", "Value": { "Ref" : "SupportEmail" }},
+					{ "Key" : "lm_sbu", "Value": { "Ref" : "SupportMarket" }},
+					{ "Key" : "lm_app_env", "Value": { "Ref" : "AppEnv" }}
+				] 
+      }
+    },	
+	"S3BucketPolicy": {
+		"Type": "AWS::S3::BucketPolicy",
+		"Properties": {
+			"Bucket": {
+				"Ref": "BucketName"
+			},
+			"PolicyDocument": {
+				"Statement": [{
+					"Sid": "IPDeny",
+					"Effect": "Deny",
+					"Principal": {
+						"AWS": "*"
+					},
+					"Action": "s3:*",
+					"Resource": {
+						"Fn::Join": ["", ["arn:aws:s3:::", {
+							"Ref": "BucketName"
+						}, "/*"]]
+					},
+					"Condition": {
+						"NotIpAddress": {
+							"aws:SourceIp": "147.179.162.185"
+						}
+					}						
+				}]
+			}
+		}
+	},
+	"IAMUser" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+		"UserName": {
+			"Ref": "UserName"
+		},
+		"Path" : { "Fn::Join" : [ "",["/", { "Ref" : "AppName" }, "/" ]] },
+		"ManagedPolicyArns" : [
+			{ "Fn::Join" : [ "", ["arn:aws:iam::", { "Ref" : "AWS::AccountId" }, ":policy/cloud-services/cloud-services-global-deny" ]]}
+		]
+      }
+    },
+    "IAMUserPolicies" : {
+      "Type" : "AWS::IAM::Policy",    
+      "Properties" : {
+      	"Users" : [{ "Ref" : "IAMUser" }],
+        "PolicyName" : "IAMPolicy",       
+        "PolicyDocument" : {
+          "Statement": [{
+            "Effect"   : "Allow",
+            "Action"   : [
+              "s3:List*",
+			  "s3:Get*",
+			  "s3:Put*",
+			  "s3:Delete*"
+              ],
+			"Resource": { "Fn::Join" : [ "", [ "arn:aws:s3:::", { "Ref" : "S3Bucket" } ]]}
+         }]
+        }
+      }
+    },
+    "IAMUserKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : { "Ref": "IAMUser" }
+      }
+    }
+  },  
+  "Outputs" : {
+    "S3BucketSecureURL": {
+      "Value" : 
+		{ "Fn::GetAtt" : [ "S3Bucket", "DomainName" ] },
+        "Description" : "S3 bucket secure URL"
+    },
+    "AccessKey" : {
+      "Value" : { "Ref" : "IAMUserKeys" },
+      "Description" : "AWSAccessKeyId of new user"
+    },
+    "SecretKey" : {
+      "Value" : { "Fn::GetAtt" : ["IAMUserKeys", "SecretAccessKey"]},
+      "Description" : "AWSSecretKey of new user"
+    }
+  }
+}
